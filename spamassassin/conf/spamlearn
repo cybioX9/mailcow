@@ -7,14 +7,29 @@ SADB="/var/lib/spamassassin/.spamassassin"
 for domain in $(ls ${VMAILDIR}); do
 	if [[ $domain != "vfilter" && $domain != "sieve" && -d "${VMAILDIR}/${domain}" ]]; then
 		for user in $(ls ${VMAILDIR}/${domain}); do
-			# TODO: delete old emails in spam: find ${VMAILDIR}/${domain}/${user}/.Junk/cur -regex '.*' -ctime +28 -type f -delete
-			if [[ -d "${VMAILDIR}/${domain}/${user}/.Junk/cur" ]]; then
-				SPAMCOUNT=$(find ${VMAILDIR}/${domain}/${user}/.Junk/cur -regex '.*' -type f | wc -l)
-				[[ $SPAMCOUNT -ge 1 ]] && sa-learn --dbpath ${SADB} --no-sync --spam ${VMAILDIR}/${domain}/${user}/.Junk/cur > /dev/null
+			if ([ -d "${VMAILDIR}/${domain}/${user}/.Junk/cur" ] || [ -d "${VMAILDIR}/${domain}/${user}/.Spam/cur" ]); then
+				SPAMCOUNT=$(find ${VMAILDIR}/${domain}/${user}/ -regextype posix-egrep -regex '.*\.(Junk|Spam)/(cur|new)/[^/]*' -type f | wc -l)
+				#echo "SPAM: ${domain} - ${user}: ${SPAMCOUNT}"
+				if [[ $SPAMCOUNT -ge 1 ]]; then
+					## learn only spam marked as read and received/modified within last 24h
+					find ${VMAILDIR}/${domain}/${user}/ -regextype posix-egrep -regex '.*\.(Junk|Spam)/(cur)/[^/]*' -type f -mtime -1 | \
+							xargs -d '\n' sa-learn --dbpath ${SADB} --no-sync --spam > /dev/null
+					## learn only spam marked as new and received/modified more than 7 days ago
+					find ${VMAILDIR}/${domain}/${user}/ -regextype posix-egrep -regex '.*\.(Junk|Spam)/(new)/[^/]*' -type f -mtime +20 | \
+							xargs -d '\n' sa-learn --dbpath ${SADB} --no-sync --spam > /dev/null
+					## delete spam older than 20 days
+					## find ${VMAILDIR}/${domain}/${user} -regextype posix-egrep -regex '.*\.(Junk|Spam)/(cur|new)/[^/]*' -mtime +21 -type f -delete
+				fi
 			fi
 			if [[ -d "${VMAILDIR}/${domain}/${user}/cur" ]]; then
-				HAMCOUNT=$(find ${VMAILDIR}/${domain}/${user}/cur -regex '.*' -type f | wc -l)
-				[[ $HAMCOUNT -ge 1 ]] && sa-learn --dbpath ${SADB} --no-sync --ham ${VMAILDIR}/${domain}/${user}/cur > /dev/null
+				## all incoming and moved mails marked as read withing last 24h, that are not in "Junk, Spam, Trash or Sent"-folders.
+				HAMCOUNT=$(find ${VMAILDIR}/${domain}/${user}/ -regextype posix-egrep -regex '.*/(cur)/[^/]*' -type f -not -regex '.*\.(Trash|Junk|Spam|Sent)/(cur|new)/[^/]*' -mtime -1 | wc -l)
+				#echo "HAM: ${domain} - ${user}: ${HAMCOUNT}"
+				if [[ $HAMCOUNT -ge 1 ]]; then
+					## learn ham
+					find ${VMAILDIR}/${domain}/${user}/ -regextype posix-egrep -regex '.*/(cur)/[^/]*' -type f -not -regex '.*\.(Trash|Junk|Spam|Sent)/(cur|new)/[^/]*' -mtime -1 | \
+					xargs -d '\n' sa-learn --dbpath ${SADB} --no-sync --ham > /dev/null
+				fi
 			fi
 		done
 	fi
